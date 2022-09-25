@@ -1,0 +1,70 @@
+<html>
+    <head>
+        <title>Face recognition service</title>
+    </head>
+    <body>
+        <h1>How to use:</h1>
+        <h2>Prepare:</h2>
+        <p>
+            <pre>
+            server_recognition_address = 'http://127.0.0.1:5000'
+            recognizer_url = server_recognition_address + '/api/face_recognize'
+            downloader_url = server_recognition_address + '/api/downloadID'
+
+            content_type = 'image/jpeg'
+            headers = {'content-type': content_type}
+            </pre>
+        </p>
+        <h2>Load persons IDs:</h2>
+        <p>
+            <pre>
+            loaded = False
+            while not loaded:
+            try:
+                response = requests.post(downloader_url, data='req')
+                known_persons = pickle.loads(codecs.decode(json.loads(response.text)['message'].encode(), "base64"))
+                user_names = [*known_persons]
+                logger.info('Downloaded from server: {}'.format(user_names))
+                loaded = True
+            except Exception as e:
+                logger.error('Can not download persons data from server. Trying again.')
+                logging.exception("Trying")
+                pass
+            </pre>
+        </p>
+        <h2>known_persons is dictionary with fields:</h2>
+        <p>
+            <pre>
+            "face_ID": face_image,
+            "name": class_dir,
+            "ID": ID
+            </pre>
+        </p>
+        <h2>Recognize faces on image:</h2>
+        <p>
+            <pre>
+            try:
+                _, img_encoded = cv2.imencode('.jpg', rgb_img)
+                response = requests.post(recognizer_url, data=img_encoded.tostring(), headers=headers)
+                (persons, unknowns_cnt) = pickle.loads(
+                    codecs.decode(json.loads(response.text)['message'].encode(), "base64"))
+            except Exception as e:
+                persons = []
+                unknowns_cnt = 0
+                logger.warning('Failed to send frame to server.')
+            </pre>
+        </p>
+        <h2>result of recognition is:</h2>
+        <p>
+            <b>unknowns_cnt</b> - number of unknown faces on image
+            <b>persons</b> - list of tuples, each tuple has format:<br>
+            <pre>
+            (
+                name,
+                ID,
+                face_box_location
+            )
+            </pre>
+        </p>
+    </body>
+</html>

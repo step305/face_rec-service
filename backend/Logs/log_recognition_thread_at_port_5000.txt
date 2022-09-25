@@ -1,0 +1,24 @@
+2022-09-23 20:30:26,292 : INFO : recognition_thread_at_port_5000 : Models loaded
+2022-09-23 20:30:32,548 : INFO : recognition_thread_at_port_5000 : KNN predictor loaded
+2022-09-23 20:33:15,917 : INFO : recognition_thread_at_port_5000 : Models loaded
+2022-09-23 20:33:16,824 : INFO : recognition_thread_at_port_5000 : KNN predictor loaded
+2022-09-23 20:34:11,820 : INFO : recognition_thread_at_port_5000 : Models loaded
+2022-09-23 20:34:12,771 : INFO : recognition_thread_at_port_5000 : KNN predictor loaded
+2022-09-23 20:34:12,841 : INFO : recognition_thread_at_port_5000 : Loaded NN_models and classifier
+2022-09-23 20:34:12,841 : INFO : recognition_thread_at_port_5000 : User1 - loaded ID
+2022-09-23 20:34:12,842 : INFO : recognition_thread_at_port_5000 : Users loaded
+2022-09-24 19:40:17,112 : INFO : recognition_thread_at_port_5000 : Models loaded
+2022-09-24 19:40:17,712 : INFO : recognition_thread_at_port_5000 : KNN predictor loaded
+2022-09-24 19:40:17,791 : INFO : recognition_thread_at_port_5000 : Loaded NN_models and classifier
+2022-09-24 19:40:17,791 : INFO : recognition_thread_at_port_5000 : new_name1 - loaded ID
+2022-09-24 19:40:17,791 : INFO : recognition_thread_at_port_5000 : Users loaded
+2022-09-24 19:40:48,434 : INFO : recognition_thread_at_port_5000 : Models loaded
+2022-09-24 19:40:49,039 : INFO : recognition_thread_at_port_5000 : KNN predictor loaded
+2022-09-24 19:40:49,114 : INFO : recognition_thread_at_port_5000 : Loaded NN_models and classifier
+2022-09-24 19:40:49,114 : INFO : recognition_thread_at_port_5000 : new_name1 - loaded ID
+2022-09-24 19:40:49,114 : INFO : recognition_thread_at_port_5000 : Users loaded
+2022-09-24 19:43:56,303 : INFO : recognition_thread_at_port_5000 : Models loaded
+2022-09-24 19:43:56,937 : INFO : recognition_thread_at_port_5000 : KNN predictor loaded
+2022-09-24 19:43:57,005 : INFO : recognition_thread_at_port_5000 : Loaded NN_models and classifier
+2022-09-24 19:43:57,005 : INFO : recognition_thread_at_port_5000 : new_name1 - loaded ID
+2022-09-24 19:43:57,005 : INFO : recognition_thread_at_port_5000 : Users loaded
