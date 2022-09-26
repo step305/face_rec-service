@@ -8,6 +8,7 @@ import argparse
 import logging
 from utils import utils
 import cv2
+import imutils
 
 
 ap = argparse.ArgumentParser()
@@ -84,8 +85,8 @@ def get_encoding_request():
     img_jpg = utils.str2jpeg(r.form['image'])
     img = cv2.imdecode(img_jpg, cv2.IMREAD_COLOR)
 
-    img, _ = face_rec.prepare_img(img)
-    enc = face_rec.calc_encodings(img, [(0, 299, 299, 0)])[0]
+    face = imutils.resize(img, height=112)
+    enc = face_rec.calc_encoding(face)
     json_enc = utils.encoding2str(enc.tobytes())
 
     msg = {'enc': json_enc}

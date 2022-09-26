@@ -1,19 +1,19 @@
-import cv2
-import pickle
-import os
-import numpy as np
-import face_recognition
 import requests
 import json
 from utils import utils
-from face_rec import face_align
+import face_recognition
+import cv2
+import numpy as np
+import imutils
+import pickle
 
 
 USERS_DB_URL = 'http://users_db-service:5000/api/'
 MODEL_PROTOPATH = 'NN_models/deploy.prototxt'
 MODEL_MODELPATH = 'NN_models/res10_300x300_ssd_iter_140000.caffemodel'
 KNN_MODELPATH = 'NN_models/trained_knn_model.clf'
-FACE_DETECTOR_CONFIDENSE = 0.5
+CONFIDENCE_THRESHOLD = 0.7
+MINIMAL_FACE_AREA = 20 * 20
 FACE_RECOGNITION_THRESHOLD = 0.5
 
 
@@ -45,6 +45,100 @@ def load_known_faces():
     return known_persons
 
 
+def distance(a, b):
+    return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+
+def area(pt1, pt2):
+    a = distance(pt1, (pt2[0], pt1[1]))
+    b = distance(pt1, (pt1[0], pt2[1]))
+    return a * b
+
+
+def rotated_rect_with_max_area(w, h, angle):
+    """
+    https://stackoverflow.com/questions/16702966/rotate-image-and-crop-out-black-borders
+    Given a rectangle of size wxh that has been rotated by 'angle' (in
+    radians), computes the width and height of the largest possible
+    axis-aligned rectangle (maximal area) within the rotated rectangle.
+    """
+    if w <= 0 or h <= 0:
+        return 0, 0
+
+    width_is_longer = w >= h
+    side_long, side_short = (w, h) if width_is_longer else (h, w)
+
+    # since the solutions for angle, -angle and 180-angle are all the same,
+    # if suffices to look at the first quadrant and the absolute values of sin,cos:
+    sin_a, cos_a = abs(np.sin(angle)), abs(np.cos(angle))
+    if side_short <= 2.*sin_a*cos_a*side_long or abs(sin_a-cos_a) < 1e-10:
+        # half constrained case: two crop corners touch the longer side,
+        #   the other two corners are on the mid-line parallel to the longer line
+        x = 0.5*side_short
+        wr, hr = (x/sin_a, x/cos_a) if width_is_longer else (x/cos_a, x/sin_a)
+    else:
+        # fully constrained case: crop touches all 4 sides
+        cos_2a = cos_a*cos_a - sin_a*sin_a
+        wr, hr = (w*cos_a - h*sin_a)/cos_2a, (h*cos_a - w*sin_a)/cos_2a
+
+    return int(wr), int(hr)
+
+
+def calc_angle(land_right, land_left):
+    left_eye = land_left
+    right_eye = land_right
+    left_eye_center = (int(np.mean([p[0] for p in left_eye])), int(np.mean([p[1] for p in left_eye])))
+    right_eye_center = (int(np.mean([p[0] for p in right_eye])), int(np.mean([p[1] for p in right_eye])))
+
+    if left_eye_center[1] > right_eye_center[1]:
+        some_point = (right_eye_center[0], left_eye_center[1])
+        direction = -1
+    else:
+        some_point = (left_eye_center[0], right_eye_center[1])
+        direction = 1
+
+    line_a = distance(left_eye_center, some_point)
+    line_b = distance(right_eye_center, some_point)
+    if direction < 0:
+        angle = np.arctan2(line_b, line_a)
+    else:
+        angle = np.arctan2(line_a, line_b)
+
+    angle = np.degrees(angle * direction)
+    return angle
+
+
+def align_face(face):
+    orig_size = face.shape[0:2][::-1]
+    face_small = cv2.resize(face, (300, 300))
+    land = face_recognition.face_landmarks(face_small[:, :, ::-1], [[0, 299, 299, 0]])
+
+    angle = calc_angle(land[0]['right_eye'], land[0]['left_eye'])
+
+    face = imutils.rotate_bound(face, -angle)
+    w, h = rotated_rect_with_max_area(orig_size[0], orig_size[1], np.radians(angle))
+    h0, w0, _ = face.shape
+    face = face[int((h0 - h)/2):int((h0 + h)/2), int((w0-w)/2):int((w0+w)/2)]
+    face = cv2.resize(face, orig_size)
+    """
+    m = cv2.getRotationMatrix2D((int(orig_size[0]/2), int(orig_size[1]/2)), angle, 1.0)
+    # face = cv2.circle(face_small, center=left_eye_center, color=(0, 0, 255), radius=2, thickness=2)
+    # face = cv2.circle(face, center=right_eye_center, color=(0, 0, 255), radius=2, thickness=2)
+    # face = cv2.circle(face, center=some_point, color=(0, 0, 255), radius=2, thickness=2)
+    
+    # face = cv2.warpAffine(face, m, face.shape[0:2][::-1])
+    print(orig_size, w, h)
+    face = cv2.warpAffine(face, m, (int(orig_size[0]*1.5), int(orig_size[1]*1.5)))
+    face = cv2.resize(face, orig_size)"""
+    return face
+
+
+def calc_encoding(face):
+    h, w, _ = face.shape
+    enc = face_recognition.face_encodings(face[:, :, ::-1], known_face_locations=[(0, w, h, 0)], model='small')
+    return enc[0]
+
+
 def calc_encodings(img, boxes):
     enc = face_recognition.face_encodings(img, known_face_locations=boxes, model='small')
     return enc
@@ -53,21 +147,11 @@ def calc_encodings(img, boxes):
 class FaceRecognizer:
     def __init__(self, logger):
         self.detector = cv2.dnn.readNetFromCaffe(MODEL_PROTOPATH, MODEL_MODELPATH)
-        self.detections = None
-        self.boxes = None
-        self.enc = None
-        self.closest_distances = None
-        self.are_matches = None
-        self.result = False
-        self.imageBlob = None
-        self.persons_data = []
-        self.image = None
-        self.confidence = 0
+        self.detector.setPreferableBackend(cv2.dnn.DNN_TARGET_CPU)
         self.logger = logger
         self.logger.info('Models loaded')
-        self.knn_clf = None
+        self.classifier = None
         self.load_knn()
-
         self.known_persons = {}
         self.load_users()
 
@@ -77,79 +161,74 @@ class FaceRecognizer:
         self.logger.info('Users loaded')
 
     def load_knn(self):
-        response = requests.post(USERS_DB_URL + 'get_model', data={})
-        self.knn_clf = utils.str2model(json.loads(response.text)['model'])
-        self.logger.info('KNN predictor loaded')
+        try:
+            response = requests.post(USERS_DB_URL + 'get_model', data={})
+            self.classifier = utils.str2model(json.loads(response.text)['model'])
+            self.logger.info('KNN predictor loaded')
+        except Exception:
+            self.classifier = None
+            self.logger.info('KNN predictor empty')
 
     def load_users(self):
         self.known_persons = load_known_faces()
 
-    def detect_faces(self, image):
-        self.result = False
-        self.imageBlob = cv2.dnn.blobFromImage(image, 1.0, (300, 300), (104.0, 177.0, 123.0), swapRB=False, crop=False)
-        self.detector.setInput(self.imageBlob)
-        self.detections = self.detector.forward()
-        if self.detections.shape[2] > 0:
-            self.result = True
-        return self.result
+    def detect_face(self, image):
+        height, width, _ = image.shape
+        blob = cv2.dnn.blobFromImage(
+            image, scalefactor=1.0, size=(300, 300), mean=[104, 117, 123], swapRB=False, crop=False,
+        )
+        self.detector.setInput(blob)
+        detections = self.detector.forward()
+        bounding_boxes = []
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > CONFIDENCE_THRESHOLD:
+                x1 = int(detections[0, 0, i, 3] * width)
+                y1 = int(detections[0, 0, i, 4] * height)
+                x2 = int(detections[0, 0, i, 5] * width)
+                y2 = int(detections[0, 0, i, 6] * height)
+                if x1 < width and x2 < width and y1 < height and y2 < height:
+                    if area((x1, y1), (x2, y2)) > MINIMAL_FACE_AREA:
+                        bounding_boxes.append([x1, y1, x2, y2])
+        faces = []
+        new_boxes = []
+        for box in bounding_boxes:
+            x1, y1, x2, y2 = box
+            face = image[y1:y2, x1:x2]
+            if face.size > 0:
+                aligned_face = align_face(face)
+                faces.append(aligned_face)
+                new_boxes.append(box)
+        return faces, new_boxes
 
-    def recognize_face(self, img):
-        self.result = False
-        self.persons_data = []
-        self.image, scale = prepare_img(img)
-        (h, w) = self.image.shape[:2]
-        self.boxes = []
-        if self.detect_faces(self.image):
-            for i in range(0, self.detections.shape[2]):
-                self.confidence = self.detections[0, 0, i, 2]
-                if self.confidence > FACE_DETECTOR_CONFIDENSE:
-                    box = self.detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                    (startX, startY, endX, endY) = box.astype("int")
-                    x0 = int(startX + 0 * w / 10)
-                    y0 = int(startY + 0.2 * h / 4)
-                    x1 = int(endX - 0 * w / 10)
-                    y1 = int(endY)
-                    if y0 > y1:
-                        t = x0
-                        q = y0
-                        x0 = x1
-                        y0 = y1
-                        x1 = t
-                        y1 = q
-                    if x0 > x1:
-                        t = x0
-                        q = y0
-                        x0 = x1
-                        y0 = y1
-                        x1 = t
-                        y1 = q
-                    self.boxes.append((y0, x1, y1, x0))
-        unknowns_cnt = len(self.boxes)
-        self.enc = []
-
-        if self.boxes:
-            self.result = True
-            self.enc = calc_encodings(self.image[:, :, ::-1], self.boxes)
-            self.closest_distances = self.knn_clf.kneighbors(self.enc, n_neighbors=1)
-            self.are_matches = [self.closest_distances[0][i][0] <= FACE_RECOGNITION_THRESHOLD
-                                for i in range(len(self.boxes))]
-            for predicted_user, face_location, found in zip(self.knn_clf.predict(self.enc), self.boxes,
-                                                            self.are_matches):
-                y0, x1, y1, x0 = face_location
-                x0 = int(x0 * scale[0])
-                x1 = int(x1 * scale[0])
-                y0 = int(y0 * scale[1])
-                y1 = int(y1 * scale[1])
-                box = (x0, y0, x1, y1)
-                if found:
-                    unknowns_cnt -= 1
-                    person_found = self.known_persons.get(predicted_user)
-                    if person_found is not None:
-                        self.persons_data.append((person_found["name"],
-                                                  person_found["ID"],
-                                                  box))
+    def recognize_face(self, image):
+        faces, boxes = self.detect_face(image)
+        names = []
+        persons_data = []
+        result = False
+        unknowns_cnt = 0
+        for k, face in enumerate(faces):
+            result = True
+            face = imutils.resize(face, height=112)
+            enc = calc_encoding(face)
+            if self.classifier is None:
+                user_name = 'unknown'
+                unknowns_cnt = unknowns_cnt + 1
+                persons_data.append(('unknown',
+                                     '0',
+                                     boxes[k]))
+            else:
+                closest = self.classifier.kneighbors([enc], n_neighbors=1)
+                if closest[0][0][0] < FACE_RECOGNITION_THRESHOLD:
+                    user_name = self.classifier.predict([enc])[0]
+                    persons_data.append((user_name,
+                                         self.known_persons[user_name]["ID"],
+                                         boxes[k]))
                 else:
-                    self.persons_data.append(('unknown',
-                                              '0',
-                                              box))
-        return self.result, self.persons_data, unknowns_cnt
+                    user_name = 'unknown'
+                    unknowns_cnt = unknowns_cnt + 1
+                    persons_data.append(('unknown',
+                                         '0',
+                                         boxes[k]))
+            names.append(user_name)
+        return result, persons_data, unknowns_cnt
